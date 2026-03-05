@@ -8,6 +8,7 @@
         #blocker { position: absolute; width: 100%; height: 100%; background-color: rgba(0,0,0,0.9); display: flex; flex-direction: column; justify-content: center; align-items: center; color: white; cursor: pointer; z-index: 10; transition: background-color 2s; }
         #crosshair { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; background: rgba(255,255,255,0.5); border-radius: 50%; transform: translate(-50%, -50%); z-index: 5; pointer-events: none; }
         #loading-text { color: red; margin-top: 20px; animation: pulse 1s infinite alternate; }
+        #controls-help { margin-top: 20px; color: #aaa; font-size: 0.9rem; text-align: center; }
         @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
     </style>
 </head>
@@ -16,6 +17,7 @@
 <div id="blocker">
     <h1>CLICK TO WAKE UP</h1>
     <div id="loading-text">Loading 3D Environment...</div>
+    <div id="controls-help">WASD: Move | MOUSE: Look | F: Flashlight | E: Trigger Scare</div>
 </div>
 <div id="crosshair"></div>
 
@@ -30,9 +32,11 @@
     const velocity = new THREE.Vector3();
     const direction = new THREE.Vector3();
     
-    // Wake up animation variables
+    // Animation & Light variables
     let isWakingUp = false;
     let standUpProgress = 0;
+    let flashlight;
+    let flashlightOn = false;
     
     // Audio
     const scaryAudio = new Audio('I See You.mp3');
@@ -42,33 +46,43 @@
 
     function init() {
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x020202);
-        scene.fog = new THREE.FogExp2(0x020202, 0.15); // Thick, creepy fog inside the room
+        scene.background = new THREE.Color(0x010101); // Pitch black background
+        scene.fog = new THREE.FogExp2(0x010101, 0.2); // Thicker fog so you can't see far without the light
 
         // Start camera low (laying in bed)
         camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.y = 0.5; 
 
-        // Lighting (Dim, spooky moonlight)
-        const ambientLight = new THREE.AmbientLight(0x222233, 0.5);
+        // --- THE FLASHLIGHT SETUP ---
+        // Color: white, Intensity: 2, Distance: 15, Angle: tight cone, Penumbra: soft edges
+        flashlight = new THREE.SpotLight(0xffffff, 2, 15, Math.PI / 6, 0.5, 1);
+        flashlight.position.set(0, 0, 0); 
+        flashlight.visible = flashlightOn; // Starts off
+        
+        // A Spotlight needs a target to point at. We place the target slightly in front of the camera.
+        camera.add(flashlight);
+        camera.add(flashlight.target);
+        flashlight.target.position.set(0, 0, -1);
+        
+        // We must add the camera to the scene for the attached lights to work
+        scene.add(camera);
+
+        // Very dim ambient lighting so the room isn't 100% black when the flashlight is off
+        const ambientLight = new THREE.AmbientLight(0x111115, 0.2);
         scene.add(ambientLight);
-        const pointLight = new THREE.PointLight(0x445588, 1, 10);
-        pointLight.position.set(0, 2, 0);
-        scene.add(pointLight);
 
         // --- LOAD YOUR 3D FURNITURE/ROOM ---
         const loader = new THREE.GLTFLoader();
         
-        // This looks for a file named "bedroom.glb" in your GitHub repository
         loader.load('bedroom.glb', function (gltf) {
             scene.add(gltf.scene);
             document.getElementById('loading-text').innerText = "Environment Loaded.";
         }, undefined, function (error) {
-            console.error('Error loading model. Make sure bedroom.glb is in your GitHub repo!', error);
+            console.error('Error loading model.', error);
             document.getElementById('loading-text').innerText = "Missing bedroom.glb! Loading empty void.";
             
             // Backup floor if model fails
-            const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({color: 0x111111}));
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({color: 0x222222}));
             floor.rotation.x = -Math.PI / 2;
             scene.add(floor);
         });
@@ -89,7 +103,7 @@
         controls.addEventListener('lock', function () { 
             blocker.style.display = 'none'; 
             if (!isWakingUp && camera.position.y < 1.0) {
-                isWakingUp = true; // Trigger the stand-up animation once
+                isWakingUp = true; 
             }
         });
         
@@ -99,14 +113,23 @@
         
         scene.add(controls.getObject());
 
-        // Movement Inputs
+        // --- MOVEMENT & ACTION INPUTS ---
         document.addEventListener('keydown', (e) => {
             if(e.code === 'KeyW') moveForward = true;
             if(e.code === 'KeyS') moveBackward = true;
             if(e.code === 'KeyA') moveLeft = true;
             if(e.code === 'KeyD') moveRight = true;
-            if(e.code === 'KeyE') scaryAudio.play(); // Press E to trigger the voice
+            
+            // Press E to trigger the voice
+            if(e.code === 'KeyE') scaryAudio.play(); 
+            
+            // Press F to toggle flashlight
+            if(e.code === 'KeyF') {
+                flashlightOn = !flashlightOn;
+                flashlight.visible = flashlightOn;
+            }
         });
+        
         document.addEventListener('keyup', (e) => {
             if(e.code === 'KeyW') moveForward = false;
             if(e.code === 'KeyS') moveBackward = false;
@@ -128,7 +151,7 @@
         const time = performance.now();
         const delta = (time - prevTime) / 1000;
 
-        // The "Wake Up" Animation (standing up from the bed)
+        // The "Wake Up" Animation 
         if (isWakingUp && camera.position.y < 1.6) {
             standUpProgress += delta * 0.5;
             camera.position.y += standUpProgress * delta;
@@ -138,6 +161,7 @@
             }
         }
 
+        // Walking Logic
         if (controls.isLocked === true && !isWakingUp) {
             velocity.x -= velocity.x * 10.0 * delta;
             velocity.z -= velocity.z * 10.0 * delta;
@@ -146,7 +170,7 @@
             direction.x = Number(moveRight) - Number(moveLeft);
             direction.normalize();
 
-            if (moveForward || moveBackward) velocity.z -= direction.z * 20.0 * delta; // Slower, heavier walking speed
+            if (moveForward || moveBackward) velocity.z -= direction.z * 20.0 * delta; 
             if (moveLeft || moveRight) velocity.x -= direction.x * 20.0 * delta;
 
             controls.moveRight(-velocity.x * delta);
